@@ -1,20 +1,22 @@
+import React, { useState } from 'react';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import { SetupScreen } from './src/screens/SetupScreen';
+import { DrawScreen } from './src/screens/DrawScreen';
+import type { Comment } from './src/lib/filters';
 
 export default function App() {
+  const [draw, setDraw] = useState<{ participants: Comment[]; winners: number } | null>(null);
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <SafeAreaProvider>
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
+        <StatusBar style="dark" />
+        {draw ? (
+          <DrawScreen participants={draw.participants} winnersCount={draw.winners} onBack={() => setDraw(null)} />
+        ) : (
+          <SetupScreen onStart={(participants, winners) => setDraw({ participants, winners })} />
+        )}
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

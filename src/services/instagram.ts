@@ -1,0 +1,80 @@
+import type { Comment } from '../lib/filters';
+
+const GRAPH = 'https://graph.instagram.com/v21.0';
+
+export function extractShortcode(link: string): string | null {
+  const m = link.match(/instagram\.com\/(?:[^/]+\/)?(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i);
+  return m ? m[1] : null;
+}
+
+async function getJson(url: string): Promise<any> {
+  const res = await fetch(url);
+  const json = await res.json();
+  if (!res.ok || json.error) {
+    throw new Error(json.error?.message ?? `Error HTTP ${res.status}`);
+  }
+  return json;
+}
+
+// Busca el post en las publicaciones de la cuenta autenticada comparando el shortcode del permalink.
+export async function resolveMediaId(link: string, token: string): Promise<string> {
+  const code = extractShortcode(link);
+  if (!code) throw new Error('El link no parece ser un post o reel de Instagram.');
+  let url: string | null =
+    `${GRAPH}/me/media?fields=id,permalink,shortcode&limit=100&access_token=${encodeURIComponent(token)}`;
+  let checkedCount = 0;
+  while (url) {
+    const page: any = await getJson(url);
+    const data = page.data ?? [];
+    checkedCount += data.length;
+    console.log(`Inspecting ${data.length} media items from account...`);
+    const hit = data.find((m: any) => {
+      const itemCode = m.shortcode || extractShortcode(m.permalink ?? '');
+      return itemCode === code;
+    });
+    if (hit) return hit.id;
+    url = page.paging?.next ?? null;
+  }
+  throw new Error(
+    `El post o reel ingresado no pertenece a la cuenta con la que iniciaste sesión (revisadas ${checkedCount} publicaciones). Para realizar sorteos con tu sesión de Instagram, debes seleccionar un post publicado por tu propia cuenta.`,
+  );
+}
+
+export async function fetchComments(mediaId: string, token: string): Promise<Comment[]> {
+  const out: Comment[] = [];
+  let url: string | null =
+    `${GRAPH}/${mediaId}/comments?fields=id,text,username,timestamp&limit=100&access_token=${encodeURIComponent(token)}`;
+  while (url) {
+    const page: any = await getJson(url);
+    for (const c of page.data ?? []) {
+      if (c.username && c.text) out.push({ id: c.id, username: c.username, text: c.text, timestamp: c.timestamp });
+    }
+    url = page.paging?.next ?? null;
+  }
+  return out;
+}
+
+export type MediaItem = {
+  id: string;
+  caption?: string;
+  mediaType?: string;
+  mediaUrl?: string;
+  thumbnailUrl?: string;
+  permalink?: string;
+  timestamp?: string;
+};
+
+export async function fetchUserMedia(token: string, limit: number = 12): Promise<MediaItem[]> {
+  const fields = 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp';
+  const url = `${GRAPH}/me/media?fields=${fields}&limit=${limit}&access_token=${encodeURIComponent(token)}`;
+  const json = await getJson(url);
+  return (json.data ?? []).map((m: any) => ({
+    id: m.id,
+    caption: m.caption,
+    mediaType: m.media_type,
+    mediaUrl: m.media_url,
+    thumbnailUrl: m.thumbnail_url || m.media_url,
+    permalink: m.permalink,
+    timestamp: m.timestamp,
+  }));
+}
