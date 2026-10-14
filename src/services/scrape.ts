@@ -108,5 +108,12 @@ export async function fetchPublicComments(link: string): Promise<ScrapeResult> {
     if (page === MAX_PAGES - 1) incomplete = true;
   }
 
+  // Instagram suele responder 200 con lista vacía a pedidos anónimos en vez de dar error.
+  if (comments.length === 0) {
+    throw new Error(
+      'Instagram devolvió 0 comentarios para este post. Probablemente bloqueó el acceso anónimo (muy común en reels). Iniciá sesión con Instagram y elegí el post de tu cuenta para obtenerlos.',
+    );
+  }
+
   return { comments, incomplete };
 }

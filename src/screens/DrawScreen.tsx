@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Roulette } from '../components/Roulette';
-import { pickWinners } from '../lib/draw';
 import type { Comment } from '../lib/filters';
 
 const MAX_SEGMENTS = 12;
@@ -9,31 +8,67 @@ const MAX_SEGMENTS = 12;
 type Props = { participants: Comment[]; winnersCount: number; onBack: () => void };
 
 export function DrawScreen({ participants, winnersCount, onBack }: Props) {
-  // Los ganadores se deciden por adelantado al azar; la ruleta solo los muestra.
-  const winners = useMemo(() => pickWinners(participants, winnersCount), [participants, winnersCount]);
+  // Lista única de participantes elegibles
+  const uniqueParticipants = useMemo(() => {
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const p of participants) {
+      const u = p.username;
+      if (!seen.has(u.toLowerCase())) {
+        seen.add(u.toLowerCase());
+        list.push(u);
+      }
+    }
+    return list;
+  }, [participants]);
+
+  // Lista inicial para mostrar en la ruleta antes de girar (muestra participantes al azar, no ganadores predeterminados)
+  const initialWheelNames = useMemo(() => {
+    const shuffled = [...uniqueParticipants];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled.slice(0, Math.min(MAX_SEGMENTS, shuffled.length));
+  }, [uniqueParticipants]);
+
   const [done, setDone] = useState<string[]>([]);
+  const [currentWinner, setCurrentWinner] = useState<string | null>(null);
   const [spinning, setSpinning] = useState(false);
   const [spinKey, setSpinKey] = useState(0);
-  const [wheel, setWheel] = useState<{ names: string[]; idx: number | null }>({ names: winners.map((w) => w.username), idx: null });
+  const [wheel, setWheel] = useState<{ names: string[]; idx: number | null }>({
+    names: initialWheelNames,
+    idx: null,
+  });
 
   const spin = () => {
-    const winner = winners[done.length];
-    const rest = participants
-      .map((p) => p.username)
-      .filter((u, i, a) => a.indexOf(u) === i && u !== winner.username && !done.includes(u));
+    // Los participantes elegibles para esta ronda son los que aún no ganaron
+    const pool = uniqueParticipants.filter((u) => !done.includes(u));
+    if (pool.length === 0) return;
+
+    // Se elige al ganador al azar en el momento de girar
+    const winnerIdxInPool = Math.floor(Math.random() * pool.length);
+    const winner = pool[winnerIdxInPool];
+    setCurrentWinner(winner);
+
+    // Los demás segmentos se completan con otros participantes al azar
+    const rest = pool.filter((u) => u !== winner);
     for (let i = rest.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [rest[i], rest[j]] = [rest[j], rest[i]];
     }
+
     const names = rest.slice(0, MAX_SEGMENTS - 1);
-    const idx = Math.floor(Math.random() * (names.length + 1));
-    names.splice(idx, 0, winner.username);
-    setWheel({ names, idx });
+    const targetIdx = Math.floor(Math.random() * (names.length + 1));
+    names.splice(targetIdx, 0, winner);
+
+    setWheel({ names, idx: targetIdx });
     setSpinning(true);
     setSpinKey((k) => k + 1);
   };
 
-  const finished = done.length >= winners.length;
+  const totalWinnersAllowed = Math.min(winnersCount, uniqueParticipants.length);
+  const finished = done.length >= totalWinnersAllowed;
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -43,7 +78,9 @@ export function DrawScreen({ participants, winnersCount, onBack }: Props) {
         winnerIndex={wheel.idx}
         spinKey={spinKey}
         onFinish={() => {
-          setDone((d) => [...d, winners[d.length].username]);
+          if (currentWinner) {
+            setDone((d) => [...d, currentWinner]);
+          }
           setSpinning(false);
         }}
       />
