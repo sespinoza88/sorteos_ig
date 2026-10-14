@@ -1,9 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Easing, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { Roulette } from '../components/Roulette';
 import type { Comment } from '../lib/filters';
 
 const MAX_SEGMENTS = 12;
+const CONFETTI_COLORS = ['#e74c3c', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#e67e22'];
+const CONFETTI_PIECES = Array.from({ length: 32 }, (_, index) => index);
 
 type Props = { participants: Comment[]; winnersCount: number; onBack: () => void };
 
@@ -36,6 +38,7 @@ export function DrawScreen({ participants, winnersCount, onBack }: Props) {
   const [currentWinner, setCurrentWinner] = useState<string | null>(null);
   const [spinning, setSpinning] = useState(false);
   const [spinKey, setSpinKey] = useState(0);
+  const [confettiKey, setConfettiKey] = useState(0);
   const [wheel, setWheel] = useState<{ names: string[]; idx: number | null }>({
     names: initialWheelNames,
     idx: null,
@@ -71,43 +74,106 @@ export function DrawScreen({ participants, winnersCount, onBack }: Props) {
   const finished = done.length >= totalWinnersAllowed;
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Sorteo</Text>
-      <Roulette
-        names={wheel.names}
-        winnerIndex={wheel.idx}
-        spinKey={spinKey}
-        onFinish={() => {
-          if (currentWinner) {
-            setDone((d) => [...d, currentWinner]);
-          }
-          setSpinning(false);
-        }}
-      />
-      <View style={{ marginTop: 24 }}>
-        {done.map((u, i) => (
-          <Text key={u} style={styles.winner}>
-            🏆 Ganador {i + 1}: @{u}
-          </Text>
-        ))}
-      </View>
-      {!finished && (
-        <TouchableOpacity style={[styles.btn, spinning && { opacity: 0.5 }]} disabled={spinning} onPress={spin}>
-          <Text style={styles.btnText}>{done.length === 0 ? '¡Girar!' : `Girar para ganador ${done.length + 1}`}</Text>
+    <View style={styles.screen}>
+      <ScrollView contentContainerStyle={styles.container}>
+        <Text style={styles.title}>Sorteo</Text>
+        <Roulette
+          names={wheel.names}
+          winnerIndex={wheel.idx}
+          spinKey={spinKey}
+          onFinish={() => {
+            if (currentWinner) {
+              setDone((d) => [...d, currentWinner]);
+              setConfettiKey((key) => key + 1);
+            }
+            setSpinning(false);
+          }}
+        />
+        <View style={{ marginTop: 24 }}>
+          {done.map((u, i) => (
+            <Text key={u} style={styles.winner}>
+              🏆 Ganador {i + 1}: @{u}
+            </Text>
+          ))}
+        </View>
+        {!finished && (
+          <TouchableOpacity style={[styles.btn, spinning && { opacity: 0.5 }]} disabled={spinning} onPress={spin}>
+            <Text style={styles.btnText}>{done.length === 0 ? '¡Girar!' : `Girar para ganador ${done.length + 1}`}</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity style={[styles.btn, styles.secondary]} disabled={spinning} onPress={onBack}>
+          <Text style={styles.btnText}>Volver</Text>
         </TouchableOpacity>
-      )}
-      <TouchableOpacity style={[styles.btn, styles.secondary]} disabled={spinning} onPress={onBack}>
-        <Text style={styles.btnText}>Volver</Text>
-      </TouchableOpacity>
-    </ScrollView>
+      </ScrollView>
+      {confettiKey > 0 && <Confetti key={confettiKey} />}
+    </View>
+  );
+}
+
+function Confetti() {
+  const { height } = useWindowDimensions();
+  return (
+    <View pointerEvents="none" style={styles.confettiOverlay}>
+      {CONFETTI_PIECES.map((index) => (
+        <ConfettiPiece key={index} index={index} screenHeight={height} />
+      ))}
+    </View>
+  );
+}
+
+function ConfettiPiece({ index, screenHeight }: { index: number; screenHeight: number }) {
+  const progress = React.useRef(new Animated.Value(0)).current;
+
+  React.useEffect(() => {
+    Animated.timing(progress, {
+      toValue: 1,
+      duration: 1800 + (index * 83) % 1000,
+      delay: (index % 8) * 55,
+      easing: Easing.linear,
+      useNativeDriver: true,
+    }).start();
+  }, [index, progress]);
+
+  const translateY = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-40 - (index % 4) * 75, screenHeight + 40],
+  });
+  const translateX = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, ((index % 7) - 3) * 32],
+  });
+  const rotate = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', `${(index % 2 === 0 ? 1 : -1) * (360 + (index % 4) * 180)}deg`],
+  });
+  const opacity = progress.interpolate({
+    inputRange: [0, 0.1, 0.8, 1],
+    outputRange: [0, 1, 1, 0],
+  });
+
+  return (
+    <Animated.View
+      style={[
+        styles.confettiPiece,
+        {
+          left: `${(index * 37) % 100}%`,
+          backgroundColor: CONFETTI_COLORS[index % CONFETTI_COLORS.length],
+          opacity,
+          transform: [{ translateX }, { translateY }, { rotate }],
+        },
+      ]}
+    />
   );
 }
 
 const styles = StyleSheet.create({
+  screen: { flex: 1 },
   container: { padding: 20, paddingTop: 60, alignItems: 'center' },
   title: { fontSize: 28, fontWeight: 'bold' },
   winner: { fontSize: 20, fontWeight: 'bold', marginVertical: 4 },
   btn: { backgroundColor: '#27ae60', paddingVertical: 14, paddingHorizontal: 32, borderRadius: 10, marginTop: 16 },
   secondary: { backgroundColor: '#7f8c8d' },
   btnText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  confettiOverlay: { ...StyleSheet.absoluteFill, overflow: 'hidden', zIndex: 10 },
+  confettiPiece: { position: 'absolute', top: 0, width: 9, height: 15, borderRadius: 2 },
 });

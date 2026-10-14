@@ -10,6 +10,7 @@ test('mentions parsed and deduped', () => {
 test('filters', () => {
   const list = [c('1', 'ana', '@x @y'), c('2', 'ana', '@x'), c('3', 'bob', 'hola'), c('4', 'eva', '@eva @z')];
   const f = { ...defaultFilters };
+  expect(applyFilters([c('untagged', 'bob', 'hola')], f).map((x) => x.id)).toEqual(['untagged']);
   expect(applyFilters(list, f).map((x) => x.id)).toEqual(['1', '3', '4']);
   expect(applyFilters(list, { ...f, minMentions: 1 }).map((x) => x.id)).toEqual(['1', '4']);
   expect(applyFilters(list, { ...f, minMentions: 2 }).map((x) => x.id)).toEqual(['1']);

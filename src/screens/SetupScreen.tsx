@@ -6,7 +6,6 @@ import { applyFilters, Comment, defaultFilters, Filters } from '../lib/filters';
 import { fetchComments, fetchUserMedia, MediaItem, resolveMediaId } from '../services/instagram';
 import { loginConfigured, loginWithInstagram } from '../services/auth';
 import { fetchPublicComments } from '../services/scrape';
-import { demoComments } from '../services/demo';
 import { getToken, removeToken, saveToken } from '../services/storage';
 
 type Props = { onStart: (participants: Comment[], winners: number) => void };
@@ -221,16 +220,14 @@ export function SetupScreen({ onStart }: Props) {
       <TouchableOpacity style={styles.btn} onPress={load} disabled={loading}>
         {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Obtener comentarios</Text>}
       </TouchableOpacity>
-      <TouchableOpacity style={[styles.btn, styles.secondary]} onPress={() => setComments(demoComments())}>
-        <Text style={styles.btnText}>Probar con datos de ejemplo</Text>
-      </TouchableOpacity>
 
       {comments && (
         <>
           <Text style={styles.section}>Filtros</Text>
+          <Text style={styles.filterHint}>Etiquetar a otras personas es opcional. Activa estos filtros solo si quieres exigirlo.</Text>
           <Checkbox label="Comentarios únicos (1 por usuario)" checked={filters.uniqueUsers} onChange={(v) => setFilters((f) => ({ ...f, uniqueUsers: v }))} />
-          <Checkbox label="Etiqueta al menos a 1 persona" checked={filters.minMentions === 1} onChange={() => mention(1)} />
-          <Checkbox label="Etiqueta al menos a 2 personas" checked={filters.minMentions === 2} onChange={() => mention(2)} />
+          <Checkbox label="Exigir que etiquete al menos a 1 persona" checked={filters.minMentions === 1} onChange={() => mention(1)} />
+          <Checkbox label="Exigir que etiquete al menos a 2 personas" checked={filters.minMentions === 2} onChange={() => mention(2)} />
           <Checkbox label="No contar auto-etiquetas" checked={filters.excludeSelfMention} onChange={(v) => setFilters((f) => ({ ...f, excludeSelfMention: v }))} />
 
           <Text style={styles.count}>
@@ -263,9 +260,9 @@ const styles = StyleSheet.create({
   btn: { backgroundColor: '#2980b9', padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 16 },
   go: { backgroundColor: '#27ae60' },
   ig: { backgroundColor: '#c13584' },
-  secondary: { backgroundColor: '#7f8c8d' },
   btnText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
   section: { fontSize: 18, fontWeight: 'bold', marginTop: 24 },
+  filterHint: { color: '#666', fontSize: 13, marginTop: 6 },
   count: { marginTop: 12, fontSize: 15, color: '#333' },
   row: { flexDirection: 'row', marginTop: 8 },
   pill: { borderWidth: 2, borderColor: '#2980b9', borderRadius: 20, width: 48, height: 40, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
