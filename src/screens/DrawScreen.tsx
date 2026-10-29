@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Animated, Easing, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { Roulette } from '../components/Roulette';
 import type { Comment } from '../lib/filters';
+import { logger } from '../lib/logger';
 
 const MAX_SEGMENTS = 12;
 const CONFETTI_COLORS = ['#e74c3c', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#e67e22'];
@@ -47,11 +48,19 @@ export function DrawScreen({ participants, winnersCount, onBack }: Props) {
   const spin = () => {
     // Los participantes elegibles para esta ronda son los que aún no ganaron
     const pool = uniqueParticipants.filter((u) => !done.includes(u));
-    if (pool.length === 0) return;
+    if (pool.length === 0) {
+      logger.warn('draw.spin_rejected', { reason: 'empty_participant_pool' });
+      return;
+    }
 
     // Se elige al ganador al azar en el momento de girar
     const winnerIdxInPool = Math.floor(Math.random() * pool.length);
     const winner = pool[winnerIdxInPool];
+    logger.info('draw.spin_started', {
+      round: done.length + 1,
+      remainingParticipants: pool.length,
+      segments: Math.min(pool.length, MAX_SEGMENTS),
+    });
     setCurrentWinner(winner);
 
     // Los demás segmentos se completan con otros participantes al azar
@@ -83,8 +92,11 @@ export function DrawScreen({ participants, winnersCount, onBack }: Props) {
           spinKey={spinKey}
           onFinish={() => {
             if (currentWinner) {
+              logger.info('draw.spin_completed', { round: done.length + 1 });
               setDone((d) => [...d, currentWinner]);
               setConfettiKey((key) => key + 1);
+            } else {
+              logger.warn('draw.spin_finished_without_winner');
             }
             setSpinning(false);
           }}

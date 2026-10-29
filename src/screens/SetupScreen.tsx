@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import * as Linking from 'expo-linking';
 import { Checkbox } from '../components/Checkbox';
 import { applyFilters, Comment, defaultFilters, Filters } from '../lib/filters';
 import { fetchComments, fetchUserMedia, MediaItem, resolveMediaId } from '../services/instagram';
 import { loginConfigured, loginWithInstagram } from '../services/auth';
 import { fetchPublicComments } from '../services/scrape';
 import { getToken, removeToken, saveToken } from '../services/storage';
+import { errorContext, logger } from '../lib/logger';
 
 type Props = { onStart: (participants: Comment[], winners: number) => void };
 
@@ -14,6 +14,7 @@ export function SetupScreen({ onStart }: Props) {
   const [token, setToken] = useState('');
   const [link, setLink] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
   const [mediaList, setMediaList] = useState<MediaItem[]>([]);
   const [loadingMedia, setLoadingMedia] = useState(false);
   const [comments, setComments] = useState<Comment[] | null>(null);
@@ -22,83 +23,97 @@ export function SetupScreen({ onStart }: Props) {
   const [winners, setWinners] = useState(1);
 
   const loadMedia = async (userToken: string) => {
-    if (!userToken) return;
+    if (!userToken) {
+      logger.warn('media.load_skipped', { reason: 'missing_token' });
+      return;
+    }
+    const startedAt = Date.now();
+    logger.info('media.load_started');
     setLoadingMedia(true);
     try {
       const items = await fetchUserMedia(userToken, 12);
       setMediaList(items);
-    } catch (e: any) {
-      console.warn('Could not load user media:', e.message);
+      logger.info('media.load_succeeded', { itemCount: items.length, durationMs: Date.now() - startedAt });
+    } catch (error) {
+      logger.error('media.load_failed', { durationMs: Date.now() - startedAt, ...errorContext(error) });
     } finally {
       setLoadingMedia(false);
     }
   };
 
   useEffect(() => {
+    logger.info('setup.mounted');
     getToken().then((t) => {
       if (t) {
+        logger.info('storage.saved_token_found');
         setToken(t);
         loadMedia(t);
+      } else {
+        logger.info('storage.no_saved_token');
       }
-    }).catch(() => {});
-
-    // Escuchar URL entrante (Deep Link / Redirect de OAuth en web y móvil)
-    const handleUrl = (event: { url: string }) => {
-      try {
-        const parsed = Linking.parse(event.url);
-        const t = parsed.queryParams?.token as string | undefined;
-        if (t) {
-          setToken(t);
-          saveToken(t).catch(() => {});
-          loadMedia(t);
-          Alert.alert('Éxito', 'Token de Instagram recibido correctamente.');
-        }
-      } catch {}
-    };
-
-    Linking.getInitialURL().then((initialUrl) => {
-      if (initialUrl) handleUrl({ url: initialUrl });
+    }).catch((error: unknown) => {
+      logger.error('storage.load_token_failed', errorContext(error));
     });
-
-    const subscription = Linking.addEventListener('url', handleUrl);
-    return () => subscription.remove();
+    return () => logger.info('setup.unmounted');
   }, []);
 
   const filtered = useMemo(() => (comments ? applyFilters(comments, filters) : []), [comments, filters]);
 
   const login = async () => {
+    if (loginLoading) return;
+    setLoginLoading(true);
+    logger.info('setup.login_submitted');
     try {
       const t = await loginWithInstagram();
       setToken(t);
       await saveToken(t);
+      logger.info('setup.login_token_saved');
       loadMedia(t);
-    } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'No se pudo iniciar sesión');
+    } catch (e) {
+      logger.error('setup.login_failed', errorContext(e));
+      Alert.alert(
+        'No se pudo iniciar sesión',
+        e instanceof Error ? e.message : 'Ocurrió un error inesperado al conectar con Instagram.',
+      );
+    } finally {
+      setLoginLoading(false);
     }
   };
 
   const load = async () => {
     console.log('Loading comments for link:', link, 'Has token:', Boolean(token.trim()));
     if (!link.trim()) {
+      logger.warn('comments.load_rejected', { reason: 'missing_post_link' });
       setErrorMessage('Por favor, ingresa el link del post o reel.');
       return Alert.alert('Falta el link', 'Ingresa el link del post.');
     }
+    const startedAt = Date.now();
+    logger.info('comments.load_started', { authenticated: Boolean(token.trim()) });
     setLoading(true);
     setErrorMessage(null);
     try {
       if (token.trim()) {
-        console.log('Using Meta Graph API...');
+        logger.info('comments.source_selected', { source: 'instagram_graph_api' });
         await saveToken(token.trim());
         const id = await resolveMediaId(link.trim(), token.trim());
-        console.log('Resolved media ID:', id);
+        logger.info('comments.media_resolved');
         const fetched = await fetchComments(id, token.trim());
-        console.log('Fetched comments count:', fetched.length);
         setComments(fetched);
+        logger.info('comments.load_succeeded', {
+          source: 'instagram_graph_api',
+          commentCount: fetched.length,
+          durationMs: Date.now() - startedAt,
+        });
       } else {
-        console.log('Using public scraping...');
+        logger.info('comments.source_selected', { source: 'public_scrape' });
         const { comments: scraped, incomplete } = await fetchPublicComments(link.trim());
-        console.log('Scraped comments count:', scraped.length, 'Incomplete:', incomplete);
         setComments(scraped);
+        logger.info('comments.load_succeeded', {
+          source: 'public_scrape',
+          commentCount: scraped.length,
+          incomplete,
+          durationMs: Date.now() - startedAt,
+        });
         if (incomplete) {
           Alert.alert(
             'Comentarios incompletos',
@@ -106,10 +121,10 @@ export function SetupScreen({ onStart }: Props) {
           );
         }
       }
-    } catch (e: any) {
-      console.error('Error fetching comments:', e);
+    } catch (e: unknown) {
+      logger.error('comments.load_failed', { durationMs: Date.now() - startedAt, ...errorContext(e) });
       setComments(null);
-      const msg = e.message ?? 'No se pudieron obtener los comentarios';
+      const msg = e instanceof Error ? e.message : 'No se pudieron obtener los comentarios';
       setErrorMessage(msg);
       Alert.alert('No se pudo obtener el post', msg);
     } finally {
@@ -122,9 +137,15 @@ export function SetupScreen({ onStart }: Props) {
   const winnersCount = Math.min(winners, filtered.length);
 
   const logout = async () => {
+    logger.info('setup.logout_started');
     setToken('');
     setMediaList([]);
-    await removeToken().catch(() => {});
+    try {
+      await removeToken();
+      logger.info('setup.logout_succeeded');
+    } catch (error) {
+      logger.error('setup.logout_failed', errorContext(error));
+    }
   };
 
   return (
@@ -132,10 +153,14 @@ export function SetupScreen({ onStart }: Props) {
       <Text style={styles.title}>Sorteo Instagram</Text>
       {loginConfigured && (
         <View style={styles.authContainer}>
-          <TouchableOpacity style={[styles.btn, styles.ig, styles.authBtn]} onPress={login}>
-            <Text style={styles.btnText}>
-              {token ? 'Cambiar cuenta de Instagram' : 'Iniciar sesión con Instagram'}
-            </Text>
+          <TouchableOpacity style={[styles.btn, styles.ig, styles.authBtn]} onPress={login} disabled={loginLoading}>
+            {loginLoading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.btnText}>
+                {token ? 'Cambiar cuenta de Instagram' : 'Iniciar sesión con Instagram'}
+              </Text>
+            )}
           </TouchableOpacity>
           {Boolean(token) && (
             <View style={styles.sessionStatus}>

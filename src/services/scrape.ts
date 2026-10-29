@@ -1,4 +1,5 @@
 import type { Comment } from '../lib/filters';
+import { errorContext, logger } from '../lib/logger';
 
 // Endpoint no documentado de Instagram. Puede cambiar o bloquear pedidos sin aviso,
 // ya que no es una API oficial: no requiere login, pero Instagram suele cortar la
@@ -59,8 +60,13 @@ function isLoginRequired(status: number, json: CommentsResponse | null): boolean
 // pedido de login, devuelve `incomplete: true` con lo ya recolectado.
 export async function fetchPublicComments(link: string): Promise<ScrapeResult> {
   const shortcode = extractShortcode(link);
-  if (!shortcode) throw new Error('El link no parece ser un post o reel de Instagram.');
+  if (!shortcode) {
+    logger.warn('scrape.rejected', { reason: 'invalid_instagram_link' });
+    throw new Error('El link no parece ser un post o reel de Instagram.');
+  }
   const mediaId = shortcodeToMediaId(shortcode);
+  const startedAt = Date.now();
+  logger.info('scrape.started', { maxPages: MAX_PAGES });
 
   const comments: Comment[] = [];
   let minId: string | undefined;
@@ -72,18 +78,39 @@ export async function fetchPublicComments(link: string): Promise<ScrapeResult> {
     url.searchParams.set('permalink_enabled', 'false');
     if (minId) url.searchParams.set('min_id', minId);
 
-    const res = await fetch(url.toString(), {
-      headers: { 'X-IG-App-ID': IG_APP_ID, 'User-Agent': USER_AGENT, Accept: 'application/json' },
-    });
+    const requestStartedAt = Date.now();
+    logger.info('scrape.page_requested', { page: page + 1, hasCursor: Boolean(minId) });
+    let res: Response;
+    try {
+      res = await fetch(url.toString(), {
+        headers: { 'X-IG-App-ID': IG_APP_ID, 'User-Agent': USER_AGENT, Accept: 'application/json' },
+      });
+    } catch (error) {
+      logger.error('scrape.request_failed', {
+        page: page + 1,
+        durationMs: Date.now() - requestStartedAt,
+        ...errorContext(error),
+      });
+      throw error;
+    }
 
     let json: CommentsResponse | null = null;
     try {
       json = await res.json();
-    } catch {
+    } catch (error) {
+      logger.warn('scrape.response_not_json', { page: page + 1, status: res.status, ...errorContext(error) });
       json = null;
     }
 
     if (!res.ok || json === null || isLoginRequired(res.status, json)) {
+      logger.warn('scrape.pagination_stopped', {
+        page: page + 1,
+        status: res.status,
+        responseStatus: json?.status,
+        reason: !res.ok ? 'http_error' : json === null ? 'invalid_json' : 'login_or_rate_limit',
+        commentsCollected: comments.length,
+        durationMs: Date.now() - requestStartedAt,
+      });
       if (comments.length === 0 && page === 0) {
         throw new Error('Instagram no permitió obtener los comentarios (puede requerir iniciar sesión o estar bloqueando pedidos anónimos).');
       }
@@ -91,7 +118,8 @@ export async function fetchPublicComments(link: string): Promise<ScrapeResult> {
       break;
     }
 
-    for (const c of json?.comments ?? []) {
+    const pageComments = json?.comments ?? [];
+    for (const c of pageComments) {
       const id = c.pk ?? c.id;
       if (id != null && c.user?.username && c.text) {
         comments.push({
@@ -102,18 +130,38 @@ export async function fetchPublicComments(link: string): Promise<ScrapeResult> {
         });
       }
     }
+    logger.info('scrape.page_processed', {
+      page: page + 1,
+      status: res.status,
+      responseCommentCount: pageComments.length,
+      totalValidComments: comments.length,
+      hasMore: Boolean(json?.has_more_comments && json?.next_min_id),
+      durationMs: Date.now() - requestStartedAt,
+    });
 
-    if (!json?.has_more_comments || !json?.next_min_id) break;
+    if (!json?.has_more_comments || !json?.next_min_id) {
+      logger.info('scrape.pagination_completed', { reason: 'no_more_comments', page: page + 1 });
+      break;
+    }
     minId = json.next_min_id;
-    if (page === MAX_PAGES - 1) incomplete = true;
+    if (page === MAX_PAGES - 1) {
+      incomplete = true;
+      logger.warn('scrape.pagination_limit_reached', { maxPages: MAX_PAGES, commentsCollected: comments.length });
+    }
   }
 
   // Instagram suele responder 200 con lista vacía a pedidos anónimos en vez de dar error.
   if (comments.length === 0) {
+    logger.warn('scrape.completed_without_comments', { incomplete, durationMs: Date.now() - startedAt });
     throw new Error(
       'Instagram devolvió 0 comentarios para este post. Probablemente bloqueó el acceso anónimo (muy común en reels). Iniciá sesión con Instagram y elegí el post de tu cuenta para obtenerlos.',
     );
   }
 
+  logger.info('scrape.succeeded', {
+    commentCount: comments.length,
+    incomplete,
+    durationMs: Date.now() - startedAt,
+  });
   return { comments, incomplete };
 }
