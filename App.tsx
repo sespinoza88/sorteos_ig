@@ -2,17 +2,12 @@ import React, { useState } from 'react';
 import { Platform } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import * as WebBrowser from 'expo-web-browser';
 import { SetupScreen } from './src/screens/SetupScreen';
 import { DrawScreen } from './src/screens/DrawScreen';
 import type { Comment } from './src/lib/filters';
 import { logger, setLogPlatform } from './src/lib/logger';
 
 setLogPlatform(Platform.OS);
-if (Platform.OS === 'web') {
-  const result = WebBrowser.maybeCompleteAuthSession();
-  logger.info('auth.web_session_completion_checked', result);
-}
 
 export default function App() {
   const [draw, setDraw] = useState<{ participants: Comment[]; winners: number } | null>(null);

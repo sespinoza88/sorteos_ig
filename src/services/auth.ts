@@ -1,5 +1,6 @@
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
+import { Platform } from 'react-native';
 import { errorContext, logger } from '../lib/logger';
 
 const APP_ID = process.env.EXPO_PUBLIC_IG_APP_ID ?? '';
@@ -9,7 +10,37 @@ const SCOPES = 'instagram_business_basic,instagram_business_manage_comments';
 
 export const loginConfigured = Boolean(APP_ID && CALLBACK_URL);
 
-export async function loginWithInstagram(): Promise<string> {
+export type WebAuthCallback = { token: string } | { error: string };
+
+export function consumeWebAuthCallback(): WebAuthCallback | null {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+  const callbackUrl = new URL(window.location.href);
+  const params = callbackUrl.searchParams;
+  if (callbackUrl.hash) {
+    new URLSearchParams(callbackUrl.hash.slice(1)).forEach((value, key) => {
+      if (!params.has(key)) params.set(key, value);
+    });
+  }
+
+  const token = params.get('token');
+  const error = params.get('error');
+  if (!token && !error) return null;
+
+  window.history.replaceState({}, document.title, callbackUrl.pathname);
+  logger.info('auth.web_callback_received', {
+    hasToken: Boolean(token),
+    errorCode: error,
+    callbackPath: callbackUrl.pathname,
+  });
+  if (error) {
+    const description = params.get('error_description');
+    return { error: description ? `${description} (${error})` : error };
+  }
+  if (!token) return { error: 'Instagram no devolvió un token de acceso.' };
+  return { token };
+}
+
+export async function loginWithInstagram(): Promise<string | null> {
   const startedAt = Date.now();
   logger.info('auth.login_started', {
     configured: loginConfigured,
@@ -32,6 +63,12 @@ export async function loginWithInstagram(): Promise<string> {
       callbackHost: new URL(CALLBACK_URL).host,
       redirectScheme: new URL(appRedirect).protocol,
     });
+    if (Platform.OS === 'web') {
+      logger.info('auth.same_tab_redirect_started');
+      window.location.assign(url);
+      return null;
+    }
+
     const result = await WebBrowser.openAuthSessionAsync(url, appRedirect);
     logger.info('auth.browser_result', { resultType: result.type });
     if (result.type !== 'success') throw new Error(`Inicio de sesión interrumpido (${result.type}).`);

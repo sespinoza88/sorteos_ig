@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, Image, ScrollView, StyleSheet, Text, TextInpu
 import { Checkbox } from '../components/Checkbox';
 import { applyFilters, Comment, defaultFilters, Filters } from '../lib/filters';
 import { fetchComments, fetchUserMedia, MediaItem, resolveMediaId } from '../services/instagram';
-import { loginConfigured, loginWithInstagram } from '../services/auth';
+import { consumeWebAuthCallback, loginConfigured, loginWithInstagram } from '../services/auth';
 import { fetchPublicComments } from '../services/scrape';
 import { getToken, removeToken, saveToken } from '../services/storage';
 import { errorContext, logger } from '../lib/logger';
@@ -43,17 +43,34 @@ export function SetupScreen({ onStart }: Props) {
 
   useEffect(() => {
     logger.info('setup.mounted');
-    getToken().then((t) => {
-      if (t) {
-        logger.info('storage.saved_token_found');
-        setToken(t);
-        loadMedia(t);
-      } else {
-        logger.info('storage.no_saved_token');
+    const initialize = async () => {
+      try {
+        const callback = consumeWebAuthCallback();
+        if (callback && 'error' in callback) {
+          logger.error('auth.web_callback_failed', { errorMessage: callback.error });
+          Alert.alert('No se pudo iniciar sesión', callback.error);
+        } else if (callback && 'token' in callback) {
+          await saveToken(callback.token);
+          setToken(callback.token);
+          logger.info('auth.web_callback_token_saved');
+          logger.info('auth.login_succeeded', { flow: 'same_tab_redirect' });
+          await loadMedia(callback.token);
+          return;
+        }
+
+        const savedToken = await getToken();
+        if (savedToken) {
+          logger.info('storage.saved_token_found');
+          setToken(savedToken);
+          loadMedia(savedToken);
+        } else {
+          logger.info('storage.no_saved_token');
+        }
+      } catch (error) {
+        logger.error('setup.initialization_failed', errorContext(error));
       }
-    }).catch((error: unknown) => {
-      logger.error('storage.load_token_failed', errorContext(error));
-    });
+    };
+    void initialize();
     return () => logger.info('setup.unmounted');
   }, []);
 
@@ -65,6 +82,7 @@ export function SetupScreen({ onStart }: Props) {
     logger.info('setup.login_submitted');
     try {
       const t = await loginWithInstagram();
+      if (!t) return;
       setToken(t);
       await saveToken(t);
       logger.info('setup.login_token_saved');
