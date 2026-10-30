@@ -7,10 +7,11 @@ const APP_ID = process.env.EXPO_PUBLIC_IG_APP_ID ?? '';
 // URL pública de la función serverless, p. ej. https://mi-sorteos.vercel.app/api/callback
 const CALLBACK_URL = process.env.EXPO_PUBLIC_AUTH_CALLBACK_URL ?? '';
 const SCOPES = 'instagram_business_basic,instagram_business_manage_comments';
+const WEB_AUTH_PENDING_KEY = 'ig_auth_pending';
 
 export const loginConfigured = Boolean(APP_ID && CALLBACK_URL);
 
-export type WebAuthCallback = { token: string } | { error: string };
+export type WebAuthCallback = { token: string } | { error: string } | { warning: string };
 
 export function consumeWebAuthCallback(): WebAuthCallback | null {
   if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
@@ -24,9 +25,28 @@ export function consumeWebAuthCallback(): WebAuthCallback | null {
 
   const token = params.get('token');
   const error = params.get('error');
-  if (!token && !error) return null;
+  if (!token && !error) {
+    let pending = false;
+    try {
+      pending = window.sessionStorage.getItem(WEB_AUTH_PENDING_KEY) === '1';
+      if (pending) window.sessionStorage.removeItem(WEB_AUTH_PENDING_KEY);
+    } catch (storageError) {
+      logger.warn('auth.web_pending_status_unavailable', errorContext(storageError));
+    }
+    if (!pending) return null;
+    logger.warn('auth.web_returned_without_callback', { callbackPath: callbackUrl.pathname });
+    return {
+      warning:
+        'Instagram terminó el inicio de sesión, pero no devolvió la autorización a Sorteos. No se concedieron permisos todavía. Vuelve a pulsar “Iniciar sesión con Instagram” para continuar; si Instagram pide verificar la cuenta, completa el desafío y espera a que vuelva a Sorteos.',
+    };
+  }
 
   window.history.replaceState({}, document.title, callbackUrl.pathname);
+  try {
+    window.sessionStorage.removeItem(WEB_AUTH_PENDING_KEY);
+  } catch (storageError) {
+    logger.warn('auth.web_pending_status_clear_failed', errorContext(storageError));
+  }
   logger.info('auth.web_callback_received', {
     hasToken: Boolean(token),
     errorCode: error,
@@ -65,6 +85,11 @@ export async function loginWithInstagram(): Promise<string | null> {
     });
     if (Platform.OS === 'web') {
       logger.info('auth.same_tab_redirect_started');
+      try {
+        window.sessionStorage.setItem(WEB_AUTH_PENDING_KEY, '1');
+      } catch (storageError) {
+        logger.warn('auth.web_pending_status_save_failed', errorContext(storageError));
+      }
       window.location.assign(url);
       return null;
     }

@@ -46,7 +46,9 @@ export function SetupScreen({ onStart }: Props) {
     const initialize = async () => {
       try {
         const callback = consumeWebAuthCallback();
-        if (callback && 'error' in callback) {
+        if (callback && 'warning' in callback) {
+          Alert.alert('Autorización pendiente', callback.warning);
+        } else if (callback && 'error' in callback) {
           logger.error('auth.web_callback_failed', { errorMessage: callback.error });
           Alert.alert('No se pudo iniciar sesión', callback.error);
         } else if (callback && 'token' in callback) {
